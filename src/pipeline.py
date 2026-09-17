@@ -2,6 +2,8 @@ from datetime import datetime
 from live_tracker import new_request_arrives, get_ip_aggregate_features, get_ip_time_features
 from request_features import get_single_request_features, get_composite_features
 from model_scorer import score_request, size_threshold, feature_columns
+from decision_engine import make_decision
+from model_scorer import threshold
 
 
 def handle_incoming_request(ip, url, status, size, user_agent, referrer, extra, protocol, method):
@@ -44,20 +46,15 @@ def handle_incoming_request(ip, url, status, size, user_agent, referrer, extra, 
         print("🚨 UNEXPECTED missing features (real bug):", unexpected_missing)
 
     result = score_request(all_features)
-    return result
+    decision = make_decision(ip, result , threshold=threshold)
+    return decision
 
 
 if __name__ == "__main__":
     for i in range(10):
         result = handle_incoming_request(
-            ip="9.9.9.9",
-            url="/wp-login.php",
-            status=404,
-            size=178,
+            ip="9.9.9.9", url="/wp-login.php", status=404, size=178,
             user_agent="Mozilla/5.0 (compatible; MJ12bot/v1.4.8; http://mj12bot.com)",
-            referrer="-",
-            extra="-",
-            protocol="HTTP/1.1",
-            method="GET"
+            referrer="-", extra="-", protocol="HTTP/1.1", method="GET"
         )
         print(i, result)

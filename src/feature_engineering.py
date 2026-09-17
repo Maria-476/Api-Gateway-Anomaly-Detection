@@ -91,6 +91,11 @@ def build_features(df, size_threshold=None):
     # ---- user agent features ----
     ua_features = df['user_agent'].apply(extract_ua_features)
     df = pd.concat([df, ua_features.apply(pd.Series)], axis=1)
+    browser_type = CategoricalDtype(categories=['Chrome', 'Firefox', 'Other', 'Safari'])
+    os_type = CategoricalDtype(categories=['Android', 'Linux', 'MacOS', 'Unknown', 'Windows', 'iOS'])
+
+    df['browser_family'] = df['browser_family'].astype(browser_type)
+    df['os_family'] = df['os_family'].astype(os_type)
     df = pd.get_dummies(df, columns=['browser_family', 'os_family'], dtype=int)
 
     # ---- time features ----
