@@ -1,4 +1,17 @@
 from datetime import datetime, timedelta
+import yaml
+from paths import get_path
+
+# --- Load configurable thresholds from YAML ---
+with open(get_path('config', 'settings.yaml')) as f:
+    config = yaml.safe_load(f)
+
+VIOLATIONS_BEFORE_BLOCK = config['decision_thresholds']['violations_before_block']
+SEVERITY_THRESHOLD_FOR_RATE_LIMIT = config['decision_thresholds']['severity_threshold_for_rate_limit']
+VIOLATION_WINDOW_MINUTES = config['decision_thresholds']['violation_window_minutes']
+BASE_THROTTLE_SECONDS = config['decision_thresholds']['base_throttle_seconds']
+BLOCK_MULTIPLIER = config['decision_thresholds']['block_multiplier']
+
 
 throttled_ips = {}
 violation_history = {}
@@ -41,7 +54,7 @@ def get_recent_violation_count(ip, window_minutes=30):
     return len(recent)
 
 
-def make_decision(ip, model_result, threshold=0.0856, threshold_duration=60):
+def make_decision(ip, model_result, threshold=0.0856, threshold_duration=BASE_THROTTLE_SECONDS):
     if is_currently_throttled(ip):
         return {'action': 'already_throttled', 'ip': ip}
 
@@ -49,14 +62,14 @@ def make_decision(ip, model_result, threshold=0.0856, threshold_duration=60):
         return {'action': 'allow', 'ip': ip, 'score': model_result['score']}
 
     record_violation(ip)
-    violations = get_recent_violation_count(ip)
+    violations = get_recent_violation_count(ip, window_minutes=VIOLATION_WINDOW_MINUTES)
     severity = model_result['score'] - threshold
 
-    if violations >= 3:
-        throttle_ip(ip, duration_seconds=threshold_duration * 4)
+    if violations >= VIOLATIONS_BEFORE_BLOCK:
+        throttle_ip(ip, duration_seconds=threshold_duration * BLOCK_MULTIPLIER)
         return {'action': 'temporary_block', 'ip': ip, 'score': model_result['score'], 'violations': violations}
 
-    elif severity > 0.02:
+    elif severity > SEVERITY_THRESHOLD_FOR_RATE_LIMIT:
         throttle_ip(ip, duration_seconds=threshold_duration)
         return {'action': 'rate_limit', 'ip': ip, 'score': model_result['score'], 'violations': violations}
 
@@ -70,6 +83,6 @@ if __name__ == "__main__":
     fake_result_high = {'score': 0.15, 'is_anomaly': True}
 
     for i in range(4):
-        result = make_decision("3.3.3.3", fake_result_high, threshold_duration=2)  # short 2-second throttle for testing
+        result = make_decision("3.3.3.3", fake_result_high, threshold_duration=2)
         print(i, result)
-        time.sleep(3)   # wait past the throttle so we can test again
+        time.sleep(3)

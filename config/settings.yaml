@@ -1,0 +1,6 @@
+decision_thresholds:
+  violations_before_block: 3
+  severity_threshold_for_rate_limit: 0.02
+  violation_window_minutes: 30
+  base_throttle_seconds: 60
+  block_multiplier: 4
