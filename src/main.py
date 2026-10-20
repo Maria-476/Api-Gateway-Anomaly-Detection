@@ -26,10 +26,35 @@ class RequestData(BaseModel):
     method: str
 
 @app.post("/check-request")
-def check_request(data: RequestData):
+async def check_request(data: RequestData):
     result = handle_incoming_request(
         ip=data.ip, url=data.url, status=data.status, size=data.size,
         user_agent=data.user_agent, referrer=data.referrer, extra=data.extra,
         protocol=data.protocol, method=data.method
     )
+    await broadcast_to_dashboard(result)
     return result
+
+
+from fastapi import WebSocket
+
+
+connected_clients = []
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    await websocket.send_text("Connected successfully!")
+    connected_clients.append(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except:
+        connected_clients.remove(websocket)
+
+async def broadcast_to_dashboard(message: dict):
+    for client in connected_clients:
+        try:
+            await client.send_json(message)
+        except:
+            pass

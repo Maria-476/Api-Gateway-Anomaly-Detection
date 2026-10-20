@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gateway Watch — Live Anomaly Monitor</title>
+<style>
+  :root {
+    --bg: #0B1220;
+    --surface: #101A2E;
+    --surface-raised: #16223B;
+    --border: #223049;
+    --text: #E8EDF6;
+    --text-muted: #7C8AA5;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+    --allow: #3ECF8E;
+    --monitor: #F5C451;
+    --ratelimit: #F2924B;
+    --block: #EF5B5B;
+    --unknown: #7C8AA5;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    padding: 24px;
+  }
+
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 24px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 20px;
+  }
+
+  h1 {
+    font-size: 22px;
+    font-weight: 650;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+
+  h1 span { color: var(--text-muted); font-weight: 450; }
+
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--block);
+    transition: background 0.3s;
+  }
+  .dot.live { background: var(--allow); box-shadow: 0 0 8px var(--allow); }
+
+  .stats {
+    display: flex;
+    gap: 28px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+
+  .stat { min-width: 90px; }
+  .stat .n { font-family: var(--mono); font-size: 26px; font-weight: 600; line-height: 1; }
+  .stat .l { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+  .stat.allow .n { color: var(--allow); }
+  .stat.monitor .n { color: var(--monitor); }
+  .stat.ratelimit .n { color: var(--ratelimit); }
+  .stat.block .n { color: var(--block); }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 1.6fr 1fr;
+    gap: 20px;
+  }
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .panel-title {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--text-muted);
+    font-size: 11px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  tbody tr { border-bottom: 1px solid var(--border); }
+  tbody tr:last-child { border-bottom: none; }
+  tbody td { padding: 9px 16px; font-family: var(--mono); }
+  tbody tr.new-row { animation: flash 1.1s ease-out; }
+  @keyframes flash {
+    from { background: var(--surface-raised); }
+    to { background: transparent; }
+  }
+
+  .feed-body { max-height: 480px; overflow-y: auto; }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: var(--sans);
+    font-weight: 600;
+  }
+  .badge.allow { color: var(--allow); background: color-mix(in srgb, var(--allow) 15%, transparent); }
+  .badge.monitor { color: var(--monitor); background: color-mix(in srgb, var(--monitor) 15%, transparent); }
+  .badge.rate_limit { color: var(--ratelimit); background: color-mix(in srgb, var(--ratelimit) 15%, transparent); }
+  .badge.temporary_block, .badge.already_throttled { color: var(--block); background: color-mix(in srgb, var(--block) 15%, transparent); }
+
+  .url-cell { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  canvas { display: block; width: 100%; height: 160px; }
+  .chart-wrap { padding: 16px; }
+
+  .offenders { padding: 4px 0; }
+  .offender-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 9px 16px;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+  }
+  .offender-row:last-child { border-bottom: none; }
+  .offender-ip { font-family: var(--mono); }
+  .offender-count { color: var(--text-muted); font-family: var(--mono); font-size: 12px; }
+
+  .empty { padding: 32px 16px; text-align: center; color: var(--text-muted); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Gateway Watch <span>— live anomaly monitor</span></h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="status-text">Connecting…</span></div>
+</header>
+
+<div class="stats">
+  <div class="stat"><div class="n" id="stat-total">0</div><div class="l">Total requests</div></div>
+  <div class="stat allow"><div class="n" id="stat-allow">0</div><div class="l">Allowed</div></div>
+  <div class="stat monitor"><div class="n" id="stat-monitor">0</div><div class="l">Monitored</div></div>
+  <div class="stat ratelimit"><div class="n" id="stat-ratelimit">0</div><div class="l">Rate-limited</div></div>
+  <div class="stat block"><div class="n" id="stat-block">0</div><div class="l">Blocked</div></div>
+</div>
+
+<div class="layout">
+  <div class="panel">
+    <div class="panel-title">Live event feed</div>
+    <div class="feed-body">
+      <table>
+        <thead><tr><th>Time</th><th>IP</th><th>URL</th><th>Action</th><th>Score</th></tr></thead>
+        <tbody id="feed"></tbody>
+      </table>
+      <div class="empty" id="feed-empty">Waiting for traffic…</div>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel" style="margin-bottom:20px;">
+      <div class="panel-title">Anomaly score, last 40 requests</div>
+      <div class="chart-wrap"><canvas id="chart" width="400" height="160"></canvas></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Most flagged IPs</div>
+      <div class="offenders" id="offenders">
+        <div class="empty">No violations yet</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const feedBody = document.getElementById('feed');
+  const feedEmpty = document.getElementById('feed-empty');
+  const dot = document.getElementById('dot');
+  const statusText = document.getElementById('status-text');
+  const canvas = document.getElementById('chart');
+  const ctx = canvas.getContext('2d');
+
+  const stats = { total: 0, allow: 0, monitor: 0, rate_limit: 0, blocked: 0 };
+  const scores = [];
+  const offenderCounts = {};
+  const MAX_ROWS = 50;
+  const MAX_POINTS = 40;
+  const THRESHOLD = 0.0856;
+
+  const badgeLabel = {
+    allow: 'Allow',
+    monitor: 'Monitor',
+    rate_limit: 'Rate-limit',
+    temporary_block: 'Block',
+    already_throttled: 'Throttled'
+  };
+
+  function connect() {
+    const ws = new WebSocket("ws://127.0.0.1:8000/ws");
+
+    ws.onopen = () => {
+      dot.classList.add('live');
+      statusText.textContent = 'Live';
+    };
+
+    ws.onclose = () => {
+      dot.classList.remove('live');
+      statusText.textContent = 'Disconnected — retrying…';
+      setTimeout(connect, 2000);
+    };
+
+    ws.onerror = () => ws.close();
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      handleEvent(data);
+    };
+  }
+
+  function handleEvent(data) {
+    stats.total++;
+    if (data.action === 'allow') stats.allow++;
+    else if (data.action === 'monitor') stats.monitor++;
+    else if (data.action === 'rate_limit') stats.rate_limit++;
+    else if (data.action === 'temporary_block') stats.blocked++;
+
+    document.getElementById('stat-total').textContent = stats.total;
+    document.getElementById('stat-allow').textContent = stats.allow;
+    document.getElementById('stat-monitor').textContent = stats.monitor;
+    document.getElementById('stat-ratelimit').textContent = stats.rate_limit;
+    document.getElementById('stat-block').textContent = stats.blocked;
+
+    if (typeof data.score === 'number') {
+      scores.push(data.score);
+      if (scores.length > MAX_POINTS) scores.shift();
+      drawChart();
+    }
+
+    if (data.action !== 'allow') {
+      offenderCounts[data.ip] = (offenderCounts[data.ip] || 0) + 1;
+      renderOffenders();
+    }
+
+    addFeedRow(data);
+  }
+
+  function addFeedRow(data) {
+    feedEmpty.style.display = 'none';
+    const tr = document.createElement('tr');
+    tr.className = 'new-row';
+    const time = new Date().toLocaleTimeString();
+    const action = data.action || 'unknown';
+    const label = badgeLabel[action] || action;
+    const score = typeof data.score === 'number' ? data.score.toFixed(4) : '—';
+    const url = data.url || '';
+
+    tr.innerHTML = `
+      <td>${time}</td>
+      <td>${data.ip || '—'}</td>
+      <td class="url-cell" title="${url}">${url}</td>
+      <td><span class="badge ${action}">${label}</span></td>
+      <td>${score}</td>
+    `;
+    feedBody.prepend(tr);
+    while (feedBody.children.length > MAX_ROWS) {
+      feedBody.removeChild(feedBody.lastChild);
+    }
+  }
+
+  function renderOffenders() {
+    const container = document.getElementById('offenders');
+    const sorted = Object.entries(offenderCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+    if (sorted.length === 0) {
+      container.innerHTML = '<div class="empty">No violations yet</div>';
+      return;
+    }
+    container.innerHTML = sorted.map(([ip, count]) =>
+      `<div class="offender-row"><span class="offender-ip">${ip}</span><span class="offender-count">${count} flagged</span></div>`
+    ).join('');
+  }
+
+  function drawChart() {
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    const padding = 10;
+    const min = Math.min(...scores, THRESHOLD) - 0.02;
+    const max = Math.max(...scores, THRESHOLD) + 0.02;
+    const range = max - min || 1;
+
+    const x = (i) => padding + (i / (MAX_POINTS - 1)) * (w - padding * 2);
+    const y = (v) => h - padding - ((v - min) / range) * (h - padding * 2);
+
+    // threshold line
+    ctx.strokeStyle = '#3A4A66';
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(0, y(THRESHOLD));
+    ctx.lineTo(w, y(THRESHOLD));
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    if (scores.length < 2) return;
+
+    ctx.strokeStyle = '#5B8CFF';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    scores.forEach((s, i) => {
+      const px = x(i), py = y(s);
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+
+    scores.forEach((s, i) => {
+      ctx.fillStyle = s > THRESHOLD ? '#EF5B5B' : '#3ECF8E';
+      ctx.beginPath();
+      ctx.arc(x(i), y(s), 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  connect();
+</script>
+
+</body>
+</html>

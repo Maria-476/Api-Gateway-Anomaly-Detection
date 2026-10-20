@@ -62,4 +62,4 @@ def simulate_repeated_attacker(delay_seconds=1):
         time.sleep(delay_seconds)
 
 if __name__ == "__main__":
-    simulate_repeated_attacker()
+    simulate_known_anomaly()
